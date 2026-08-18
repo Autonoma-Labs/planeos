@@ -3,6 +3,9 @@
 		max_size {$FILE_SIZE_LIMIT}
 	}
 
+	# Liveness for the proxy itself, answered without touching any upstream.
+	respond /_proxy-health 200
+
   redir /spaces /spaces/ permanent
 	reverse_proxy /spaces/* {$SPACE_HOST:space}:{$SPACE_PORT:3000}
 
