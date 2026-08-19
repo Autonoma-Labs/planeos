@@ -13,9 +13,14 @@ from drf_spectacular.views import (
     SpectacularSwaggerView,
 )
 
+from plane.autonoma.handler import autonoma_endpoint
+
 handler404 = "plane.app.views.error_404.custom_404_view"
 
 urlpatterns = [
+    # Autonoma Environment Factory. Declared before the "api/" include so the
+    # signed seeding endpoint is not shadowed by plane.app.urls.
+    path("api/autonoma", autonoma_endpoint),
     path("api/", include("plane.app.urls")),
     path("api/public/", include("plane.space.urls")),
     path("api/instances/", include("plane.license.urls")),
