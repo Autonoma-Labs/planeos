@@ -75,3 +75,5 @@ opentelemetry-exporter-otlp-proto-grpc==1.28.1
 drf-spectacular==0.29.0
 # html sanitizer
 nh3==0.2.18
+# autonoma environment factory (test-data seeding endpoint)
+autonoma-ai[django]==0.2.9
