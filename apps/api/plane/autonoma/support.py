@@ -8,8 +8,8 @@ Autonoma's SDK handler is awaited inside ``asyncio.run()`` (see
 ``autonoma_django.create_django_handler``), so a factory that touched the ORM
 directly would trip Django's ``SynchronousOnlyOperation`` guard. Every factory is
 therefore written as a plain synchronous function and wrapped with
-:func:`db_call`, which hands it to asgiref's shared sync thread — the ORM runs
-there exactly as it does inside a normal request.
+:func:`db_call`, which hands it to a dedicated seeding thread where the ORM runs
+exactly as it does inside a normal request.
 
 The factories call the app's own creation code (serializers, view helpers), and
 that code reads the acting user from ``crum`` the way
@@ -21,6 +21,7 @@ serializers and auth adapters expect.
 from __future__ import annotations
 
 import functools
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, Callable, Optional
@@ -39,17 +40,30 @@ from plane.db.models import User
 TEST_SOURCE = "autonoma"
 
 
-def db_call(fn: Callable[..., Any]) -> Callable[..., Any]:
-    """Run a synchronous ORM function from the SDK's async handler.
+# The SDK's Django adapter is a SYNCHRONOUS view that drives the protocol with
+# ``asyncio.run()``. Under ASGI that view is already executing on a worker thread
+# that asgiref owns — Plane's middleware stack is sync-only (CorsMiddleware,
+# crum), so Django bridges the async chain back to sync with ``async_to_sync``,
+# which pins the request to a ``CurrentThreadExecutor``. Re-entering asgiref from
+# there with ``thread_sensitive=True`` asks that executor to run work on the very
+# thread it is blocking in, and asgiref refuses: "You cannot submit onto
+# CurrentThreadExecutor from its own thread".
+#
+# So the ORM work goes to a thread of our own instead. One worker means one
+# thread, so a whole ``up``/``down`` shares a single database connection the way
+# a request does, and no event loop is running there — which is all Django's
+# ``SynchronousOnlyOperation`` guard actually asks for.
+_seed_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="autonoma-seed")
 
-    ``thread_sensitive=True`` keeps every call on asgiref's single shared sync
-    thread, so one database connection serves a whole ``up``/``down`` instead of
-    one per factory call.
-    """
+
+def db_call(fn: Callable[..., Any]) -> Callable[..., Any]:
+    """Run a synchronous ORM function from the SDK's async handler."""
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        return sync_to_async(_run_in_sync_thread, thread_sensitive=True)(fn, args, kwargs)
+        return sync_to_async(_run_in_sync_thread, thread_sensitive=False, executor=_seed_executor)(
+            fn, args, kwargs
+        )
 
     return wrapper
 
